@@ -41,7 +41,6 @@
       flex: 1 1 160px;
       max-width: 200px;
       text-align: left;
-      transition: box-shadow 0.2s;
     }
     .card-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #aaa; margin-bottom: 12px; }
     .name-input {
@@ -139,9 +138,14 @@
       justify-content: space-between;
       box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
-    .event-name { font-size: 14px; font-weight: 500; }
-    .event-days { font-size: 12px; color: #999; margin-top: 2px; }
-    .delete-btn { background: none; border: none; font-size: 20px; color: #ccc; line-height: 1; padding: 0 4px; }
+    .event-name { font-size: 14px; font-weight: 600; }
+    .event-dates { font-size: 11px; color: #777; margin-top: 1px; }
+    .event-days { font-size: 12px; color: #999; margin-top: 3px; font-weight: 500; }
+    
+    .event-ctrls { display: flex; gap: 12px; align-items: center; }
+    .edit-btn { background: none; border: none; font-size: 14px; color: #aaa; }
+    .delete-btn { background: none; border: none; font-size: 20px; color: #ccc; line-height: 1; }
+    
     .confirm-row { display: flex; align-items: center; gap: 8px; }
     .confirm-text { font-size: 12px; color: #999; }
     .confirm-yes { font-size: 12px; padding: 4px 10px; background: #c0392b; color: #fff; border: none; border-radius: 6px; }
@@ -163,7 +167,7 @@
       border-radius: 16px;
       padding: 28px 28px 24px;
       width: 100%;
-      max-width: 340px;
+      max-width: 360px;
       margin: 20px;
       box-shadow: 0 8px 40px rgba(0,0,0,0.15);
     }
@@ -176,13 +180,14 @@
       border: none;
       border-bottom: 1.5px solid #e0ddd8;
       background: transparent;
-      font-size: 16px;
+      font-size: 15px;
       padding: 8px 0;
       outline: none;
       font-family: inherit;
-      margin-bottom: 20px;
+      margin-bottom: 18px;
       color: #1a1a1a;
     }
+    .date-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
     .modal-btn {
       width: 100%;
       padding: 13px;
@@ -192,6 +197,7 @@
       border-radius: 10px;
       font-size: 14px;
       letter-spacing: 0.03em;
+      margin-top: 10px;
     }
   </style>
 </head>
@@ -241,14 +247,28 @@
 <div class="overlay" id="modal-event">
   <div class="modal">
     <div class="modal-header">
-      <span class="modal-title">Add Leave</span>
+      <span class="modal-title" id="event-modal-title">Add Leave</span>
       <button class="close-btn" onclick="closeModal('modal-event')">×</button>
     </div>
+    <input type="hidden" id="ev-id" />
     <label class="modal-label">Event name</label>
     <input class="modal-input" id="ev-name" placeholder="e.g. Summer holiday" />
+    
+    <div class="date-grid">
+      <div>
+        <label class="modal-label">Start Date</label>
+        <input class="modal-input" id="ev-start" type="date" onchange="autoCalcDays()" />
+      </div>
+      <div>
+        <label class="modal-label">End Date</label>
+        <input class="modal-input" id="ev-end" type="date" onchange="autoCalcDays()" />
+      </div>
+    </div>
+
     <label class="modal-label">Number of days</label>
     <input class="modal-input" id="ev-days" type="number" min="0.5" step="0.5" placeholder="e.g. 5" />
-    <button class="modal-btn" onclick="addEvent()">Add</button>
+    
+    <button class="modal-btn" id="save-event-btn" onclick="saveEvent()">Add Leave</button>
   </div>
 </div>
 
@@ -265,7 +285,6 @@
 </div>
 
 <script>
-  // ── CORE LOCALSTORAGE LOGIC ──
   const KEY = slot => `leave-tracker-${slot}`;
   let activeSlot = null;
 
@@ -277,7 +296,6 @@
     localStorage.setItem(KEY(slot), JSON.stringify(data));
   }
 
-  // Pre-fill saved names on load
   window.onload = () => {
     ['user1','user2'].forEach((slot,i) => {
       const d = getData(slot);
@@ -331,13 +349,19 @@
       list.innerHTML = '<div class="empty">No leave added yet.</div>';
       return;
     }
-    list.innerHTML = d.events.map(ev => `
+    
+    // Sort events by date
+    const sortedEvents = [...d.events].sort((a,b) => new Date(a.start) - new Date(b.start));
+
+    list.innerHTML = sortedEvents.map(ev => `
       <div class="event-row" id="row-${ev.id}">
         <div>
           <div class="event-name">${esc(ev.name)}</div>
+          <div class="event-dates">${formatDateRange(ev.start, ev.end)}</div>
           <div class="event-days">${ev.days} day${ev.days !== 1 ? 's' : ''}</div>
         </div>
-        <div id="ctrl-${ev.id}">
+        <div class="event-ctrls" id="ctrl-${ev.id}">
+          <button class="edit-btn" onclick="openEditEvent(${ev.id})">Edit</button>
           <button class="delete-btn" onclick="askDelete(${ev.id})">×</button>
         </div>
       </div>
@@ -346,6 +370,80 @@
 
   function esc(str) {
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function formatDateRange(start, end) {
+    if (!start) return "";
+    const options = { month: 'short', day: 'numeric' };
+    const s = new Date(start).toLocaleDateString(undefined, options);
+    if (!end || start === end) return s;
+    const e = new Date(end).toLocaleDateString(undefined, options);
+    return `${s} – ${e}`;
+  }
+
+  function autoCalcDays() {
+    const start = document.getElementById('ev-start').value;
+    const end = document.getElementById('ev-end').value;
+    if (start && end) {
+      const s = new Date(start);
+      const e = new Date(end);
+      const diff = Math.ceil((e - s) / (1000 * 60 * 60 * 24)) + 1;
+      if (diff > 0) document.getElementById('ev-days').value = diff;
+    }
+  }
+
+  function openAddEvent() {
+    document.getElementById('event-modal-title').textContent = "Add Leave";
+    document.getElementById('save-event-btn').textContent = "Add Leave";
+    document.getElementById('ev-id').value = '';
+    document.getElementById('ev-name').value = '';
+    document.getElementById('ev-start').value = '';
+    document.getElementById('ev-end').value = '';
+    document.getElementById('ev-days').value = '';
+    document.getElementById('modal-event').classList.add('open');
+  }
+
+  function openEditEvent(id) {
+    const d = getData(activeSlot);
+    const ev = d.events.find(e => e.id === id);
+    if (!ev) return;
+
+    document.getElementById('event-modal-title').textContent = "Edit Leave";
+    document.getElementById('save-event-btn').textContent = "Update Leave";
+    document.getElementById('ev-id').value = ev.id;
+    document.getElementById('ev-name').value = ev.name;
+    document.getElementById('ev-start').value = ev.start || '';
+    document.getElementById('ev-end').value = ev.end || '';
+    document.getElementById('ev-days').value = ev.days;
+    
+    document.getElementById('modal-event').classList.add('open');
+  }
+
+  function saveEvent() {
+    const id = document.getElementById('ev-id').value;
+    const name = document.getElementById('ev-name').value.trim();
+    const start = document.getElementById('ev-start').value;
+    const end = document.getElementById('ev-end').value;
+    const days = parseFloat(document.getElementById('ev-days').value);
+
+    if (!name || isNaN(days) || days <= 0) return;
+
+    const d = getData(activeSlot);
+    
+    if (id) {
+      // Update existing
+      const idx = d.events.findIndex(e => e.id == id);
+      if (idx !== -1) {
+        d.events[idx] = { ...d.events[idx], name, start, end, days };
+      }
+    } else {
+      // Add new
+      d.events.push({ id: Date.now(), name, start, end, days });
+    }
+
+    saveData(activeSlot, d);
+    closeModal('modal-event');
+    render();
   }
 
   function askDelete(id) {
@@ -364,29 +462,10 @@
     render();
   }
 
-  function openAddEvent() {
-    document.getElementById('ev-name').value = '';
-    document.getElementById('ev-days').value = '';
-    document.getElementById('modal-event').classList.add('open');
-    setTimeout(() => document.getElementById('ev-name').focus(), 50);
-  }
-
-  function addEvent() {
-    const name = document.getElementById('ev-name').value.trim();
-    const days = parseFloat(document.getElementById('ev-days').value);
-    if (!name || !days || days <= 0) return;
-    const d = getData(activeSlot);
-    d.events.push({ id: Date.now(), name, days });
-    saveData(activeSlot, d);
-    closeModal('modal-event');
-    render();
-  }
-
   function openSetDays() {
     const d = getData(activeSlot);
     document.getElementById('total-input').value = d.totalDays || '';
     document.getElementById('modal-total').classList.add('open');
-    setTimeout(() => document.getElementById('total-input').focus(), 50);
   }
 
   function setTotal() {
@@ -403,14 +482,9 @@
     document.getElementById(id).classList.remove('open');
   }
 
-  // Close modal on overlay click
   document.querySelectorAll('.overlay').forEach(el => {
     el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
   });
-
-  // Enter key in modals
-  document.getElementById('ev-days').addEventListener('keydown', e => { if (e.key === 'Enter') addEvent(); });
-  document.getElementById('total-input').addEventListener('keydown', e => { if (e.key === 'Enter') setTotal(); });
 </script>
 </body>
 </html>
